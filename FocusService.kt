@@ -50,6 +50,7 @@ class FocusService : Service() {
     private var selectedRelaxSound = "oriental"
     private var taskName = "Focus Time"
     private var engine: TimerEngine? = null
+    private var lastTickTimestamp: Long = 0L
 
     private var appTheme = "reimu"
     private var isBreak = false
@@ -143,6 +144,7 @@ class FocusService : Service() {
             }
             "RESUME_TIMER" -> {
                 engine?.let {
+                    lastTickTimestamp = SystemClock.elapsedRealtime()
                     it.start()
                     startTicker()
                     scheduleAlarm()
@@ -177,6 +179,7 @@ class FocusService : Service() {
                 engine?.let {
                     cancelAlarm()
                     it.dismissAlarm()
+                    lastTickTimestamp = SystemClock.elapsedRealtime()
                     stopAlarmAudioAndVibe()
                     broadcastState()
                     if (it.isActive) {
@@ -246,6 +249,7 @@ class FocusService : Service() {
         }
 
         engine?.let {
+            lastTickTimestamp = SystemClock.elapsedRealtime()
             it.start()
             FocusService.engine = it
 
@@ -270,11 +274,8 @@ class FocusService : Service() {
         tickerJob?.cancel()
         tickerJob = serviceScope.launch {
             while (true) {
+                delay(1000)
                 tick()
-                val now = SystemClock.uptimeMillis()
-                val nextTick = now + (1000 - (now % 1000))
-                val delayTime = nextTick - SystemClock.uptimeMillis()
-                delay(maxOf(0L, delayTime))
             }
         }
     }
@@ -287,45 +288,61 @@ class FocusService : Service() {
     private fun tick() {
         val eng = engine ?: return
         if (eng.isActive && !eng.isRinging) {
-            // Play native tick sound if enabled and app is in background
-            if (tickEnabled && tickTone != null && !AppLifecycleTracker.isForeground) {
-                tickTone?.startTone(ToneGenerator.TONE_PROP_BEEP, 20) // 20ms beep
-            }
+            val now = SystemClock.elapsedRealtime()
+            val elapsed = ((now - lastTickTimestamp + 500) / 1000).toInt()
+            if (elapsed <= 0) return
 
-            // App Blocker logic
-            if (isStrictMode) {
-                checkForegroundApp()
-            }
+            lastTickTimestamp += elapsed * 1000L
 
-            // Tick the engine
-            val event = eng.tick()
+            var intervalCompleteHappened = false
+            var sequenceCompleteHappened = false
+            var isServiceStopped = false
 
-            // Broadcast state to UI
-            broadcastState()
+            for (i in 0 until elapsed) {
+                if (!eng.isActive || eng.isRinging) break
 
-            // Process tick events
-            when (event) {
-                is TimerEngine.TickEvent.IntervalComplete -> {
-                    cancelAlarm()
-                    if (eng.isRinging) {
-                        triggerPersistentAlarm()
-                    } else {
-                        triggerGentleReminder()
-                        if (eng.isActive) {
-                            scheduleAlarm()
-                            updateNotification("running")
+                // Play native tick sound if enabled and app is in background
+                if (tickEnabled && tickTone != null && !AppLifecycleTracker.isForeground) {
+                    tickTone?.startTone(ToneGenerator.TONE_PROP_BEEP, 20) // 20ms beep
+                }
+
+                // App Blocker logic
+                if (isStrictMode) {
+                    checkForegroundApp()
+                }
+
+                val event = eng.tick()
+                broadcastState()
+
+                when (event) {
+                    is TimerEngine.TickEvent.IntervalComplete -> {
+                        cancelAlarm()
+                        if (eng.isRinging) {
+                            triggerPersistentAlarm()
+                        } else {
+                            triggerGentleReminder()
+                            intervalCompleteHappened = true
                         }
                     }
-                }
-                is TimerEngine.TickEvent.SequenceComplete -> {
-                    cancelAlarm()
-                    if (eng.isRinging) {
-                        triggerPersistentAlarm()
-                    } else {
-                        stopAlarmAndService()
+                    is TimerEngine.TickEvent.SequenceComplete -> {
+                        cancelAlarm()
+                        if (eng.isRinging) {
+                            triggerPersistentAlarm()
+                        } else {
+                            stopAlarmAndService()
+                            isServiceStopped = true
+                        }
                     }
+                    else -> {}
                 }
-                else -> {}
+            }
+
+            // Reschedule alarm and update notification at the end of the batch
+            if (eng.isActive && !eng.isRinging && !isServiceStopped) {
+                if (intervalCompleteHappened) {
+                    scheduleAlarm()
+                    updateNotification("running")
+                }
             }
         }
     }
@@ -759,7 +776,8 @@ class FocusService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 builder.setChronometerCountDown(true)
             }
-            builder.setWhen(System.currentTimeMillis() + eng.timeRemaining * 1000L)
+            val elapsedRemaining = (lastTickTimestamp + eng.timeRemaining * 1000L + 998L) - SystemClock.elapsedRealtime()
+            builder.setWhen(System.currentTimeMillis() + elapsedRemaining)
             builder.setShowWhen(true)
         } else {
             builder.setUsesChronometer(false)
@@ -961,36 +979,7 @@ class FocusService : Service() {
     private fun onAlarmTriggered() {
         val eng = engine ?: return
         if (!eng.isActive || eng.isRinging) return
-
-        // Fast-forward the engine's countdown ticks safely to trigger the alarm/reminder
-        while (eng.isActive && !eng.isRinging) {
-            val event = eng.tick()
-            broadcastState()
-            when (event) {
-                is TimerEngine.TickEvent.IntervalComplete -> {
-                    cancelAlarm()
-                    if (eng.isRinging) {
-                        triggerPersistentAlarm()
-                    } else {
-                        triggerGentleReminder()
-                        if (eng.isActive) {
-                            scheduleAlarm()
-                        }
-                    }
-                    break
-                }
-                is TimerEngine.TickEvent.SequenceComplete -> {
-                    cancelAlarm()
-                    if (eng.isRinging) {
-                        triggerPersistentAlarm()
-                    } else {
-                        stopAlarmAndService()
-                    }
-                    break
-                }
-                else -> {}
-            }
-        }
+        tick()
     }
 
     // --- PERSISTENT STATE SAVING ---
@@ -1037,11 +1026,15 @@ class FocusService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val eng = engine
-        if (eng != null && (eng.isActive || eng.isRinging || eng.timeRemaining != eng.totalDuration)) {
+        if (eng != null && (eng.isActive || eng.isRinging)) {
+            // Active session — save state to be safe, but keep service running in foreground
             saveEngineState()
+        } else {
+            // Idle or paused — clean up and stop service/dismiss notification
+            clearSavedEngineState()
+            stopAlarmAndService()
         }
         super.onTaskRemoved(rootIntent)
-        stopAlarmAndService()
     }
 
     override fun onBind(intent: Intent?): IBinder? {

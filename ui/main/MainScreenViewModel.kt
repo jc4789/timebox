@@ -1,7 +1,9 @@
 package com.example.timeboxvibe.ui.main
 
+import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.datastore.core.DataStore
@@ -55,7 +57,8 @@ data class TimerUiState(
     val appTheme: String = "reimu",
     val language: String = "en",
     val activeTab: String = "timer",
-    val presets: List<TimerPreset> = emptyList()
+    val presets: List<TimerPreset> = emptyList(),
+    val isExactAlarmPermitted: Boolean = true
 )
 
 class MainScreenViewModel(
@@ -67,6 +70,7 @@ class MainScreenViewModel(
     val uiState: StateFlow<TimerUiState> = _uiState.asStateFlow()
 
     init {
+        checkExactAlarmPermission()
         // Collect state updates from background service reactively via TimerStateHolder Flow
         viewModelScope.launch {
             TimerStateHolder.state.collect { serviceState ->
@@ -490,6 +494,30 @@ class MainScreenViewModel(
                 if (prefs[stringPreferencesKey("activePresetId")] == presetId) {
                     prefs[stringPreferencesKey("activePresetId")] = "dual_box"
                 }
+            }
+        }
+    }
+
+    fun checkExactAlarmPermission() {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val isPermitted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            alarmManager.canScheduleExactAlarms()
+        } else {
+            true
+        }
+        _uiState.value = _uiState.value.copy(isExactAlarmPermitted = isPermitted)
+    }
+
+    fun requestExactAlarmPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val intent = Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                data = Uri.fromParts("package", context.packageName, null)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }

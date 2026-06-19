@@ -24,6 +24,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var viewModel: MainScreenViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -49,11 +51,12 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        // Instantiate viewModel at the activity level
+        viewModel = MainScreenViewModel.Factory(applicationContext, applicationContext.dataStore)
+            .create(MainScreenViewModel::class.java)
+
         enableEdgeToEdge()
         setContent {
-            val viewModel: MainScreenViewModel = viewModel(
-                factory = MainScreenViewModel.Factory(applicationContext, applicationContext.dataStore)
-            )
             val state by viewModel.uiState.collectAsStateWithLifecycle()
 
             TimeBoxVibeTheme(appTheme = state.appTheme, isBreak = state.isBreak) {
@@ -66,4 +69,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::viewModel.isInitialized) {
+            viewModel.checkExactAlarmPermission()
+        }
+    }
 }

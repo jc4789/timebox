@@ -206,6 +206,94 @@ fun SettingsScreen(viewModel: MainScreenViewModel) {
             }
         }
 
+        SettingsDividerLine()
+
+        // --- 05. DIAGNOSTICS / 診断 ---
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SettingsLabelText("05. DIAGNOSTICS / 診断")
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                    Pc98Text(
+                        text = "ALARM PRECISION",
+                        color = colors.primary,
+                        fontSize = 14.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    if (state.isExactAlarmPermitted) {
+                        Pc98Text(
+                            text = "STATUS: ACTIVE // PRECISION LOCK ENGAGED",
+                            color = colors.primary,
+                            fontSize = 10.sp
+                        )
+                    } else {
+                        Pc98Text(
+                            text = "STATUS: DEGRADED // INEXACT FALLBACK\nBACKGROUND TIMING MAY JITTER.",
+                            color = colors.error,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+
+                if (!state.isExactAlarmPermitted) {
+                    var isPressed by remember { mutableStateOf(false) }
+                    val scope = rememberCoroutineScope()
+                    Box(
+                        modifier = Modifier
+                            .offset(x = if (isPressed) 2.dp else 0.dp, y = if (isPressed) 2.dp else 0.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                isPressed = true
+                                scope.launch {
+                                    delay(100)
+                                    isPressed = false
+                                }
+                                view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_PRESS)
+                                viewModel.requestExactAlarmPermission()
+                            }
+                            .touhouHudFrame(
+                                backgroundColor = Color(0xFF1A1A1A),
+                                lineColor = colors.primary,
+                                isActive = isPressed
+                            )
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Pc98Text(
+                            text = "AUTHORIZE",
+                            color = colors.primary,
+                            fontSize = 12.sp,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .touhouHudFrame(
+                                backgroundColor = Color(0xFF1A1A1A),
+                                lineColor = colors.primary.copy(alpha = 0.5f),
+                                isActive = false
+                            )
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Pc98Text(
+                            text = "SECURE",
+                            color = colors.primary.copy(alpha = 0.5f),
+                            fontSize = 12.sp,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
     }
 }
